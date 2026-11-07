@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "argRoverRobot",
+			"path": "K:/arg/argRoverRobot"
+		},
+		{
+			"name": "ARGRoverRobotEsp",
+			"path": ".."
+		}
+	],
+	"settings": {}
+}

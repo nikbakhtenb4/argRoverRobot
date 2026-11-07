@@ -1,39 +1,33 @@
 
-#define OPTO_PIN 27
+#include <Arduino.h>
 
-volatile uint32_t pulseCount = 0;
-
-void IRAM_ATTR onPulse() {
-  pulseCount++;
-}
+#define OPTO_ANALOG_PIN 34
 
 void setup() {
-  Serial.begin(115200);
+    Serial.begin(115200);
+    delay(1000);
 
-  pinMode(OPTO_PIN, INPUT);
+    analogReadResolution(12);
+    analogSetPinAttenuation(OPTO_ANALOG_PIN, ADC_11db);
 
-  attachInterrupt(
-    digitalPinToInterrupt(OPTO_PIN),
-    onPulse,
-    RISING
-  );
-
-  Serial.println("ST150 Opto Counter Reader");
-  Serial.println("Waiting for pulses...");
+    Serial.println();
+    Serial.println("================================");
+    Serial.println(" ESP32 - ST150 Analog Reader");
+    Serial.println(" Board: ESP32-WROOM-32");
+    Serial.println(" ADC Pin: GPIO34");
+    Serial.println("================================");
 }
 
 void loop() {
-  static uint32_t lastTime = 0;
+    int raw = analogRead(OPTO_ANALOG_PIN);
+    uint32_t voltage = analogReadMilliVolts(OPTO_ANALOG_PIN);
 
-  if (millis() - lastTime >= 1000) {
-    lastTime += 1000;
+    Serial.print("ADC Raw: ");
+    Serial.print(raw);
 
-    noInterrupts();
-    uint32_t count = pulseCount;
-    pulseCount = 0;
-    interrupts();
+    Serial.print(" | Voltage: ");
+    Serial.print(voltage);
+    Serial.println(" mV");
 
-    Serial.print("Pulses per second: ");
-    Serial.println(count);
-  }
+    delay(10);
 }

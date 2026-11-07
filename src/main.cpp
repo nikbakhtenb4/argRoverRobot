@@ -1,33 +1,44 @@
 
 #include <Arduino.h>
 
-#define OPTO_ANALOG_PIN 34
+#define DAC_PIN 25
+#define ADC_PIN 34
+
+// Initial DAC value for approximately 2.1V
+uint8_t dacValue = 167;
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
 
     analogReadResolution(12);
-    analogSetPinAttenuation(OPTO_ANALOG_PIN, ADC_11db);
+    analogSetPinAttenuation(ADC_PIN, ADC_11db);
 
-    Serial.println();
-    Serial.println("================================");
-    Serial.println(" ESP32 - ST150 Analog Reader");
-    Serial.println(" Board: ESP32-WROOM-32");
-    Serial.println(" ADC Pin: GPIO34");
-    Serial.println("================================");
+    dacWrite(DAC_PIN, dacValue);
+
+    Serial.println("ESP32 Constant Voltage Test");
+    Serial.println("Target: 2.1V");
+    Serial.println("DAC: GPIO25");
+    Serial.println("ADC: GPIO34");
 }
 
 void loop() {
-    int raw = analogRead(OPTO_ANALOG_PIN);
-    uint32_t voltage = analogReadMilliVolts(OPTO_ANALOG_PIN);
+    uint32_t sum = 0;
 
-    Serial.print("ADC Raw: ");
-    Serial.print(raw);
+    for (int i = 0; i < 32; i++) {
+        sum += analogReadMilliVolts(ADC_PIN);
+        delay(2);
+    }
 
-    Serial.print(" | Voltage: ");
-    Serial.print(voltage);
+    uint32_t average = sum / 32;
+
+    Serial.print("DAC Value: ");
+    Serial.print(dacValue);
+
+    Serial.print(" | Average Voltage: ");
+    Serial.print(average);
+
     Serial.println(" mV");
 
-    delay(10);
+    delay(500);
 }

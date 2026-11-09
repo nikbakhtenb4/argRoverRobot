@@ -12,20 +12,23 @@ const uint32_t MAX_MV = 3000;
 uint32_t targetMv[4] = {2630, 2630, 2800, 2800};
 bool     enabled[4]  = {false, false, false, false};
 
-// ---------------- سروو ----------------
-const uint8_t SERVO_PINS[2]   = {18, 19};
-const bool    SERVO_INVERT[2] = {false, false};   // اگر جهت برعکس بود true کن
-const float   HOME_DEG[2]     = {90, 90};         // زاویه‌ی تراز هر سروو
-const float   LIMIT_MIN       = 60;               // حد ایمنی مکانیکی (درجه)
-const float   LIMIT_MAX       = 120;
-const uint16_t SERVO_MIN_US   = 500;
-const uint16_t SERVO_MAX_US   = 2400;
+// ---------------- سروو DS3002 ----------------
+const uint8_t  SERVO_PINS[2]   = {18, 19};
+const bool     SERVO_INVERT[2] = {false, false};
+const float    RANGE_DEG       = 180.0f;     // زاویه کل سروو (از دیتاشیت چک کن)
+const uint16_t SERVO_MIN_US    = 500;        // از دیتاشیت چک کن
+const uint16_t SERVO_MAX_US    = 2500;
+const float    HOME_DEG[2]     = {90, 90};
+const float    LIMIT_MIN       = 60;         // حد ایمنی مکانیکی
+const float    LIMIT_MAX       = 120;
 
 float curDeg[2] = {90, 90};
+float velDps[2] = {0, 0};
 float tgtDeg[2] = {90, 90};
-float speedDps  = 40;           // سرعت حرکت (درجه بر ثانیه)
-bool  homed     = false;        // سروو‌ها حداقل یک بار به home رسیده‌اند
-bool  pendingArm = false;       // منتظر رسیدن به home برای فعال کردن اپتوها
+float smoothTime = 0.5f;     // ثانیه: بزرگ‌تر = نرم‌تر
+float maxSpeed   = 30.0f;    // درجه بر ثانیه
+bool  homed      = false;
+bool  pendingArm = false;
 
 // ===================== اپتو =====================
 uint8_t mvToDac(uint32_t mv) {
@@ -62,9 +65,9 @@ void disableAllOptos() {
 
 // ===================== سروو =====================
 void servoWrite(uint8_t i, float deg) {
-  float a = SERVO_INVERT[i] ? (180.0f - deg) : deg;
-  float us = SERVO_MIN_US + (a / 180.0f) * (SERVO_MAX_US - SERVO_MIN_US);
-  uint32_t duty = (uint32_t)(us / 20000.0f * 65535.0f);   // 50Hz, 16 بیت
+  float a = SERVO_INVERT[i] ? (RANGE_DEG - deg) : deg;
+  float us = SERVO_MIN_US + (a / RANGE_DEG) * (SERVO_MAX_US - SERVO_MIN_US);
+  uint32_t duty = (uint32_t)(us / 20000.0f * 65535.0f + 0.5f);   // 50Hz, 16 بیت
   ledcWrite(SERVO_PINS[i], duty);
 }
 
@@ -74,9 +77,27 @@ float clampDeg(float d) {
   return d;
 }
 
+// فیلتر میرای بحرانی (SmoothDamp): سرعت همیشه پیوسته است
+float smoothDamp(float cur, float tgt, float &vel, float st, float vmax, float dt) {
+  if (st < 0.05f) st = 0.05f;
+  float omega  = 2.0f / st;
+  float x      = omega * dt;
+  float e      = 1.0f / (1.0f + x + 0.48f * x * x + 0.235f * x * x * x);
+  float change = cur - tgt;
+  float maxChg = vmax * st;
+  if (change >  maxChg) change =  maxChg;
+  if (change < -maxChg) change = -maxChg;
+  float t2   = cur - change;
+  float temp = (vel + omega * change) * dt;
+  vel = (vel - omega * temp) * e;
+  float out = t2 + (change + temp) * e;
+  if ((tgt - cur > 0) == (out > tgt)) { out = tgt; vel = 0; }
+  return out;
+}
+
 bool atHome() {
   for (int i = 0; i < 2; i++)
-    if (fabsf(curDeg[i] - HOME_DEG[i]) > 0.5f) return false;
+    if (fabsf(curDeg[i] - HOME_DEG[i]) > 0.1f || fabsf(velDps[i]) > 0.5f) return false;
   return true;
 }
 
@@ -84,22 +105,19 @@ void goHome() {
   for (int i = 0; i < 2; i++) tgtDeg[i] = HOME_DEG[i];
 }
 
-// حرکت نرم و بدون بلوکه شدن به سمت هدف
 void updateServos() {
-  static uint32_t last = millis();
-  uint32_t now = millis();
-  float dt = (now - last) / 1000.0f;
-  last = now;
-  float step = speedDps * dt;
+  static uint32_t lastUs = micros();
+  uint32_t nowUs = micros();
+  float dt = (nowUs - lastUs) / 1e6f;
+  if (dt < 0.005f) return;            // به‌روزرسانی هر 5ms یا بیشتر
+  lastUs = nowUs;
+  if (dt > 0.05f) dt = 0.05f;         // محافظت در برابر وقفه‌های طولانی
 
   for (int i = 0; i < 2; i++) {
-    float diff = tgtDeg[i] - curDeg[i];
-    if (fabsf(diff) <= step) curDeg[i] = tgtDeg[i];
-    else curDeg[i] += (diff > 0 ? step : -step);
+    curDeg[i] = smoothDamp(curDeg[i], tgtDeg[i], velDps[i], smoothTime, maxSpeed, dt);
     servoWrite(i, curDeg[i]);
   }
 
-  // فعال کردن اپتوها فقط بعد از رسیدن سروو‌ها به home
   if (pendingArm && atHome()) {
     pendingArm = false;
     for (int i = 0; i < 4; i++) { enabled[i] = true; applyChannel(i); }
@@ -119,6 +137,16 @@ int splitTokens(const String &cmd, String *tokens, int maxN) {
     start = sp + 1;
   }
   return n;
+}
+
+void printStatus() {
+  Serial.printf("S1=%.2f(tgt %.2f) S2=%.2f(tgt %.2f) | ", curDeg[0], tgtDeg[0], curDeg[1], tgtDeg[1]);
+  for (int i = 0; i < 4; i++) {
+    uint32_t sum = 0;
+    for (int k = 0; k < 8; k++) sum += analogReadMilliVolts(ADC_PINS[i]);
+    Serial.printf("CH%d %s %4u mV | ", i + 1, enabled[i] ? "ON " : "OFF", sum / 8);
+  }
+  Serial.println();
 }
 
 void handleOptoCommand(String *tokens, int n) {
@@ -173,7 +201,6 @@ void handleCommand(String cmd) {
     Serial.println("OPTOS OFF (servos hold position)");
     return;
   }
-  if (cmd == "all on") { handleOptoCommand(t, n - 1 > 0 ? t : t, 0); }  // جایگزین پایین
   if (cmd == "all on") {
     if (!homed) { Serial.println("REFUSED: servos not homed yet"); return; }
     for (int i = 0; i < 4; i++) { enabled[i] = true; applyChannel(i); }
@@ -186,29 +213,41 @@ void handleCommand(String cmd) {
     Serial.println("Moving servos to home, optos will turn on when reached...");
     return;
   }
-  if (cmd == "home") {
-    goHome();
-    Serial.println("Servos -> home");
+  if (cmd == "home") { goHome(); Serial.println("Servos -> home"); return; }
+  if (cmd == "status") { printStatus(); return; }
+
+  if (t[0] == "smooth" && n == 2) {
+    float s = t[1].toFloat();
+    if (s < 0.05f) s = 0.05f;
+    if (s > 5.0f)  s = 5.0f;
+    smoothTime = s;
+    Serial.printf("Smooth time: %.2f s\n", smoothTime);
     return;
   }
   if (t[0] == "speed" && n == 2) {
     float s = t[1].toFloat();
     if (s < 1) s = 1;
     if (s > 200) s = 200;
-    speedDps = s;
-    Serial.printf("Speed: %.0f deg/s\n", speedDps);
+    maxSpeed = s;
+    Serial.printf("Max speed: %.0f deg/s\n", maxSpeed);
     return;
   }
   if ((t[0] == "s1" || t[0] == "s2") && n == 2) {
     int i = (t[0] == "s1") ? 0 : 1;
     tgtDeg[i] = clampDeg(t[1].toFloat());
-    Serial.printf("Servo%d target: %.1f\n", i + 1, tgtDeg[i]);
+    Serial.printf("Servo%d target: %.2f\n", i + 1, tgtDeg[i]);
+    return;
+  }
+  if ((t[0] == "j1" || t[0] == "j2") && n == 2) {
+    int i = (t[0] == "j1") ? 0 : 1;
+    tgtDeg[i] = clampDeg(tgtDeg[i] + t[1].toFloat());
+    Serial.printf("Servo%d target: %.2f\n", i + 1, tgtDeg[i]);
     return;
   }
   if (t[0] == "s" && n == 3) {
     tgtDeg[0] = clampDeg(t[1].toFloat());
     tgtDeg[1] = clampDeg(t[2].toFloat());
-    Serial.printf("Servo targets: %.1f , %.1f\n", tgtDeg[0], tgtDeg[1]);
+    Serial.printf("Servo targets: %.2f , %.2f\n", tgtDeg[0], tgtDeg[1]);
     return;
   }
 
@@ -217,7 +256,6 @@ void handleCommand(String cmd) {
 
 // ===================== setup / loop =====================
 void setup() {
-  // اول از همه: اپتوها غیرفعال
   disableAllOptos();
 
   Serial.begin(115200);
@@ -227,7 +265,7 @@ void setup() {
   analogReadResolution(12);
   for (int i = 0; i < 4; i++) analogSetPinAttenuation(ADC_PINS[i], ADC_11db);
 
-  // سروو‌ها (ESP32 Arduino core 3.x)
+  // ESP32 Arduino core 3.x
   for (int i = 0; i < 2; i++) {
     ledcAttach(SERVO_PINS[i], 50, 16);
     curDeg[i] = HOME_DEG[i];
@@ -238,23 +276,11 @@ void setup() {
   homed = true;
 
   Serial.println("Servos at HOME. Optos OFF.");
-  Serial.println("Commands: arm | disarm | home | s1 95 | s2 85 | s 95 85 | speed 30");
+  Serial.println("Commands: arm | disarm | home | status | s1 95 | s2 85 | s 95 85 | j1 0.2 | smooth 0.6 | speed 20");
   Serial.println("          '1 2 on' | '3 off' | '1 2 2650' | 'all off'");
 }
 
 void loop() {
   if (Serial.available()) handleCommand(Serial.readStringUntil('\n'));
   updateServos();
-
-  static uint32_t lastPrint = 0;
-  if (millis() - lastPrint >= 1000) {
-    lastPrint = millis();
-    Serial.printf("S1=%.1f S2=%.1f | ", curDeg[0], curDeg[1]);
-    for (int i = 0; i < 4; i++) {
-      uint32_t sum = 0;
-      for (int k = 0; k < 8; k++) sum += analogReadMilliVolts(ADC_PINS[i]);
-      Serial.printf("CH%d %s %4u mV | ", i + 1, enabled[i] ? "ON " : "OFF", sum / 8);
-    }
-    Serial.println();
-  }
 }

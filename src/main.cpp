@@ -14,6 +14,7 @@ bool     enabled[4]  = {false, false, false, false};
 
 // ---------------- سروو DS3002 ----------------
 const uint8_t  SERVO_PINS[2]   = {18, 19};
+const uint8_t SERVO_CH[2] = {0, 1};   // کانال‌های LEDC
 const bool     SERVO_INVERT[2] = {false, false};
 const float    RANGE_DEG       = 180.0f;     // زاویه کل سروو (از دیتاشیت چک کن)
 const uint16_t SERVO_MIN_US    = 500;        // از دیتاشیت چک کن
@@ -21,6 +22,9 @@ const uint16_t SERVO_MAX_US    = 2500;
 const float    HOME_DEG[2]     = {90, 90};
 const float    LIMIT_MIN       = 60;         // حد ایمنی مکانیکی
 const float    LIMIT_MAX       = 120;
+const uint32_t HOME_SETTLE_MS = 1500;   // زمان رسیدن فیزیکی سروو‌ها به home
+const uint32_t OPTO_DELAY_MS  = 2000;   // تأخیر بعد از home تا فعال شدن اپتوها
+
 
 float curDeg[2] = {90, 90};
 float velDps[2] = {0, 0};
@@ -68,7 +72,7 @@ void servoWrite(uint8_t i, float deg) {
   float a = SERVO_INVERT[i] ? (RANGE_DEG - deg) : deg;
   float us = SERVO_MIN_US + (a / RANGE_DEG) * (SERVO_MAX_US - SERVO_MIN_US);
   uint32_t duty = (uint32_t)(us / 20000.0f * 65535.0f + 0.5f);   // 50Hz, 16 بیت
-  ledcWrite(SERVO_PINS[i], duty);
+  ledcWrite(SERVO_CH[i], duty);
 }
 
 float clampDeg(float d) {
@@ -214,7 +218,7 @@ void handleCommand(String cmd) {
     return;
   }
   if (cmd == "home") { goHome(); Serial.println("Servos -> home"); return; }
-  if (cmd == "status") { printStatus(); return; }
+  if (cmd == "status" || cmd == "s" || cmd == "?") { printStatus(); return; }
 
   if (t[0] == "smooth" && n == 2) {
     float s = t[1].toFloat();
@@ -256,6 +260,7 @@ void handleCommand(String cmd) {
 
 // ===================== setup / loop =====================
 void setup() {
+  // مرحله ۱: قبل از هر کاری، همه اپتوها غیرفعال (کانال 3 و 4 به زمین کشیده می‌شوند)
   disableAllOptos();
 
   Serial.begin(115200);
@@ -265,17 +270,25 @@ void setup() {
   analogReadResolution(12);
   for (int i = 0; i < 4; i++) analogSetPinAttenuation(ADC_PINS[i], ADC_11db);
 
-  // ESP32 Arduino core 3.x
+  // مرحله ۲: سروو‌ها به home
   for (int i = 0; i < 2; i++) {
-    ledcAttach(SERVO_PINS[i], 50, 16);
+    ledcSetup(SERVO_CH[i], 50, 16);
+    ledcAttachPin(SERVO_PINS[i], SERVO_CH[i]);
     curDeg[i] = HOME_DEG[i];
     tgtDeg[i] = HOME_DEG[i];
     servoWrite(i, curDeg[i]);
   }
-  delay(1500);          // زمان رسیدن فیزیکی سروو‌ها به home
+  Serial.println("Optos OFF. Servos moving to HOME...");
+  delay(HOME_SETTLE_MS);
   homed = true;
+  Serial.println("Servos at HOME.");
 
-  Serial.println("Servos at HOME. Optos OFF.");
+  // مرحله ۳: ۲ ثانیه صبر، بعد فعال کردن اپتوها
+  Serial.printf("Optos will turn ON in %u ms (send 'stop' to abort after)\n", OPTO_DELAY_MS);
+  delay(OPTO_DELAY_MS);
+  for (int i = 0; i < 4; i++) { enabled[i] = true; applyChannel(i); }
+  Serial.println("ARMED: optos ON");
+
   Serial.println("Commands: arm | disarm | home | status | s1 95 | s2 85 | s 95 85 | j1 0.2 | smooth 0.6 | speed 20");
   Serial.println("          '1 2 on' | '3 off' | '1 2 2650' | 'all off'");
 }

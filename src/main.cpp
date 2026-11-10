@@ -7,8 +7,8 @@
 #define SCL_PIN 22
 
 // MPU6050 address
-#define MPU_ADDR 0x69    //3V3 (آدرس ۰x69)    =AD0
-
+// #define MPU_ADDR 0x69    //3V3 (آدرس ۰x69)    =AD0
+#define MPU_ADDR 0x68    //GND (آدرس ۰x68)  =AD0
 // Registers
 #define REG_WHO_AM_I  0x75
 #define REG_PWR_MGMT  0x6B
@@ -111,43 +111,60 @@ bool readSensor() {
 // ---------------- Calibration ----------------
 
 void calibrateGyro() {
-  Serial.println();
-  Serial.println("================================");
-  Serial.println("GYROSCOPE CALIBRATION");
-  Serial.println("Keep sensor COMPLETELY STILL!");
-  Serial.println("================================");
+  Serial.println("\nGYRO CALIBRATION");
+  Serial.println("Keep MPU6050 COMPLETELY STILL!");
+  delay(3000);
 
-  double sumX = 0;
-  double sumY = 0;
-  double sumZ = 0;
+  const int N = 2000;
 
-  int validSamples = 0;
+  double sx = 0, sy = 0, sz = 0;
+  double sx2 = 0, sy2 = 0, sz2 = 0;
 
-  for (int i = 0; i < CAL_SAMPLES; i++) {
+  int count = 0;
+
+  for (int i = 0; i < N; i++) {
     if (readSensor()) {
-      sumX += gxRaw / 131.0;
-      sumY += gyRaw / 131.0;
-      sumZ += gzRaw / 131.0;
-      validSamples++;
-    }
+      float x = gxRaw / 131.0f;
+      float y = gyRaw / 131.0f;
+      float z = gzRaw / 131.0f;
 
-    delay(5);
+      sx += x;
+      sy += y;
+      sz += z;
+
+      sx2 += x*x;
+      sy2 += y*y;
+      sz2 += z*z;
+
+      count++;
+    }
+    delay(3);
   }
 
-  if (validSamples == 0) {
-    Serial.println("Calibration FAILED!");
+  if (count < N * 0.9) {
+    Serial.println("Calibration FAILED: I2C errors");
     return;
   }
 
-  gyroOffsetX = sumX / validSamples;
-  gyroOffsetY = sumY / validSamples;
-  gyroOffsetZ = sumZ / validSamples;
+  gyroOffsetX = sx / count;
+  gyroOffsetY = sy / count;
+  gyroOffsetZ = sz / count;
 
-  Serial.println("Calibration completed!");
+  float noiseX = sqrt(sx2/count - gyroOffsetX*gyroOffsetX);
+  float noiseY = sqrt(sy2/count - gyroOffsetY*gyroOffsetY);
+  float noiseZ = sqrt(sz2/count - gyroOffsetZ*gyroOffsetZ);
 
-  Serial.printf("Offset X: %.3f deg/s\n", gyroOffsetX);
-  Serial.printf("Offset Y: %.3f deg/s\n", gyroOffsetY);
-  Serial.printf("Offset Z: %.3f deg/s\n", gyroOffsetZ);
+  Serial.println("\nCALIBRATION RESULTS:");
+
+  Serial.printf("Offset X: %.3f\n", gyroOffsetX);
+  Serial.printf("Offset Y: %.3f\n", gyroOffsetY);
+  Serial.printf("Offset Z: %.3f\n", gyroOffsetZ);
+
+  Serial.println("\nGYRO NOISE (standard deviation):");
+
+  Serial.printf("X: %.3f deg/s\n", noiseX);
+  Serial.printf("Y: %.3f deg/s\n", noiseY);
+  Serial.printf("Z: %.3f deg/s\n", noiseZ);
 }
 
 // ---------------- Setup ----------------

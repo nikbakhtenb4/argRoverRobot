@@ -130,9 +130,11 @@ esp 32 wroom 32
 ماژول رله Active-Low است (مثل ماژول‌های آبی رایج). اگر Active-High است، RELAY_ACTIVE_LOW را false کن.
 
 
+----------------
 
 
-
+https://lidar.oss-cn-beijin.aliyuncs.com/lidar.rar
+ LIDAR-B0602
 
 
 

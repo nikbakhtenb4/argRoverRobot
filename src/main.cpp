@@ -29,8 +29,8 @@ const float    RANGE_DEG       = 180.0f;
 const uint16_t SERVO_MIN_US    = 500;
 const uint16_t SERVO_MAX_US    = 2500;
 const float    HOME_DEG[2]     = {100, 105};
-const float    LIMIT_MIN       = 80;
-const float    LIMIT_MAX       = 120;
+const float    LIMIT_MIN       = 60;
+const float    LIMIT_MAX       = 140;
 const float    DEFAULT_STEP    = 5.0f;   // مقدار پیش‌فرض دستورهای u / d (درجه)
 
 float curDeg[2] = {100, 105};

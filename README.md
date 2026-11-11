@@ -6,6 +6,15 @@ One ESP-IDF firmware replaces the earlier standalone Arduino servo sketch. It re
 
 ## Build and checks
 
+Open `ARG-Rover.code-workspace` in VS Code. It selects the actual ESP-IDF project
+folder, so the PlatformIO debug adapter runs beside its `platformio.ini`.
+Generate the local IntelliSense database with
+`pio run --project-dir firmware/rastag_link --target compiledb`.
+The three upstream debug launch modes are retained. Debugging requires the
+configured hardware debug probe; a USB serial cable alone does not provide JTAG.
+Generated Arduino include paths and another developer's absolute drive paths are
+replaced by the current ESP-IDF compile database and workspace-relative paths.
+
 ```sh
 python -m pip install platformio cryptography pyserial
 python -m platformio run --project-dir firmware/rastag_link

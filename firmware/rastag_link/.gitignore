@@ -1,4 +1,6 @@
 .pio/
 sdkconfig.esp32dev
 managed_components/
+compile_commands.json
+.pioinit
 

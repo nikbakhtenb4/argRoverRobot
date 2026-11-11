@@ -1,159 +1,23 @@
--------scotter------
-battery: 36V 4400
-adaptor:42V
-Hoverboard Smart Balance Wheel
+# Electrical interface and controller behavior
 
+This follows ARG Rover commit ed3ff5c34af4a63b27d592cde78a7c66bdfc2689 and the owner-confirmed wiring. Older diagrams showing a third servo, GPIO27 opto, or MPU6050 are not the wiring authority for this release.
 
+| Signal | ESP32 pin / behavior |
+|---|---|
+| Tilt servo 1 / 2 | GPIO18 / GPIO19; 50 Hz, 500–2500 us mapping |
+| Home angles | 100 / 105 degrees; allowed profiles 80–120 degrees |
+| Opto 1 / 2 | DAC GPIO25 / GPIO26; requested nominal 2630 mV when enabled |
+| Opto 3 / 4 | GPIO23 / GPIO13; Hi-Z enabled, output LOW disabled |
+| Hoverboard relay | GPIO4, **active LOW**; HIGH is OFF |
+| Delta-2A LiDAR receive | GPIO27, UART2, 230400 baud, 8N1; RX only |
+| Maintenance console | USB UART0 115200 baud |
 
-opto counter st150
+Servos tilt the hoverboard gyro boards; they do not directly set wheel speed. The firmware does not fabricate IMU/encoder feedback. DAC voltage depends on supply/calibration. External circuitry must hold the active-low relay OFF during reset/boot before software takes ownership; verify relay polarity and cutoff on the actual board. A software STOP is not a certified physical emergency stop. LiDAR detects returns in its scan plane, not drop-offs or every transparent/low obstacle.
 
+The 10 ms control loop owns outputs. A drive begins with relay OFF and 1.5 seconds at home, then enables all four original optos and the relay. Tilt slews at 10 degrees/second. Intensity scales the calibrated tilt, not a measured velocity. Stop cuts relay/optos/PWM rather than moving a powered hoverboard toward home.
 
-UART R
+Every movement/jog command expires within 250 ms without renewal. Loop stalls, link loss, missing/faulty scans, obstacle clearance, OTA, or output errors inhibit motion. Faulted runs cannot automatically resume; a new explicit action is required. Output faults latch until reboot. Unchanged outputs are not rewritten at idle.
 
-                  ST150
-          ┌─────────────────┐
-          │                 │
-          │ D ──────┐       │
-          │         ├──────────── GND UART
-          │ E ──────┘       │          │
-          │                 │        [104]
-          │                 │          │
-          │ + (پایه اول) ───┼────┬──────┘
-          │                 │    │
-          │                 │    └──────── خروجی سبز UART
-          │                 │                   │
-          │ + (پایه دوم) ───┼──[103]──[102]─────┘
-          │                 │
-          └─────────────────┘
+The ESP buffers UART data, validates Delta-2A frames, assembles full revolutions, and sends translated RLS2 scans to Android. The local interlock requires a valid return in every 2-degree bin of the required sector: front/reverse sector for translation, full circle for turns. Missing coverage is unknown and inhibits motion. `front_cdeg` aligns scan angle to the chassis; stop distance is calibrated in 300–3000 mm, default 400 mm. A 400 mm band above that distance reduces tilt. This is a conservative sector policy, not a fitted robot footprint or certified collision avoidance system.
 
-
-GPIO34
-
-
---------car camera mirror:-------------:
-مدل اندرویدی گزارش‌شده
-V9E
-
-پلتفرم
-SP9832E
-
-سیستم‌عامل
-
-Android 8.1
-
-معماری برنامه
-
-ARM 32-bit
-
-فضای داده
-
-۲۷ گیگابایت
-
-فضای آزاد
-
-حدود ۲۳ گیگابایت
-----------
-RAM: حدود ۱٫۴ گیگابایت
-
-پردازنده: چهار هسته ARM Cortex-A53
-
-خروجی CPU part: 0xd03 با Cortex-A53 مطابقت دارد. پردازنده ۶۴ بیتی از نظر معماری است، اما محیط اندروید فعلی برنامه‌های ARM 32-bit را هدف گرفته است.
-
-
-دو دوربین شناسایی‌شده
-
-شناسه‌های Camera 0 و Camera 1 توسط سرویس دوربین دیده می‌شوند؛ برنامه دوربین کارخانه نیز هر دو را باز کرده است.
-
-
-فضای ذخیره‌سازی: ۲۷ گیگابایت
-
-----
-نسخهٔ اندروید
-Android 8.1 — API 27
-
-پردازنده
-Spreadtrum SC9832e، چهار هستهٔ Cortex-A53
-
-حافظهٔ RAM
-حدود ۱٫۳۶ گیگابایت
-
-بستهٔ دوربین کارخانه‌ای
-com.zqc.camera
-
-لانچر دستگاه
-com.zqc.launcher
--------
-نتیجهٔ بررسی برنامهٔ دوربین
-نام بسته	com.zqc.camera
-نسخه	6.3.2_2025102811
-محل نصب	/system/app/ZqcCamera
-نسخهٔ هدف اندروید	API 27
-معماری برنامه	armeabi-v7a، یعنی ARM32
-شناسهٔ کاربر	1000، کاربر سیستمی
-مجوزهای مهم	دوربین، میکروفون، شبکه و دسترسی‌های سیستمی متعدد
-
-
-
-
-
-
-
-         دوربین
-            │
-            ▼
-    آینهٔ اندرویدی
-    ├── پردازش تصویر
-    ├── تشخیص اشیا
-    ├── تصمیم‌گیری سطح بالا
-    ├── رابط کاربری و صدا
-    └── ارسال فرمان
-            │ USB / Bluetooth / Wi-Fi
-            ▼
-          ESP32
-    ├── کنترل سرعت موتورها
-    ├── خواندن حسگرها
-    └── توقف اضطراری
-            │
-            ▼
-       موتورها و ربات
-
-
-
-
-
------------esp--------
-esp 32 wroom 32
-2: ژیروسکوپ‌ها MPU6050 (ماژول GY-521)
-سروو ۱ و ۲ زیر برد سمت چپ و سروو ۳ سمت راست است.
-گر ترتیب فرق دارد، جای پین‌ها و SERVO_NAME را عوض کن.
-
-ماژول رله Active-Low است (مثل ماژول‌های آبی رایج). اگر Active-High است، RELAY_ACTIVE_LOW را false کن.
-
-
-----------------
-
-
-https://lidar.oss-cn-beijin.aliyuncs.com/lidar.rar
- LIDAR-B0602
-
-
-
-
-----------اتصالات
-قطعه	پایه	اتصال به ESP32
-اپتو ۱ و ۲	DAC	GPIO25 و GPIO26 (مثل قبل)
-اپتو ۳ و ۴	Hi-Z / زمین	GPIO27 و GPIO13 (مثل قبل)
-پایه‌های خواندن اپتو	ADC	GPIO34، 35، 32، 33 (مثل قبل)
-سروو ۱ (چپ-A)	سیگنال	GPIO18
-سروو ۲ (چپ-B)	سیگنال	GPIO19
-سروو ۳ (راست)	سیگنال	GPIO23
-ژیروسکوپ چپ	VCC / GND / SDA / SCL	3V3 / GND / GPIO21 / GPIO22، AD0 به GND (آدرس 0x68)
-ژیروسکوپ راست	VCC / GND / SDA / SCL	3V3 / GND / GPIO21 / GPIO22، AD0 به 3V3 (آدرس 0x69)
-ماژول رله	VCC / GND / IN	5V (VIN) / GND / GPIO4
-منبع 5-6V (حداقل 5A) ──┬── V+ سروو 1، 2، 3
-                       └── خازن 1000µF نزدیک سروو‌ها
-GND منبع ── GND سروو‌ها ── GND ESP32 ── GND هوروبرد (UART)  (همه زمین‌ها مشترک)
-
-I2C (هر دو MPU6050 موازی روی همان دو سیم):
-  GPIO21 ── SDA چپ ── SDA راست
-  GPIO22 ── SCL چپ ── SCL راست
+Read-only USB diagnostics: `LIDAR?` and `MOTION?`. The retired generic two-wheel controller is used only by legacy regression tests; it is not compiled into the application.

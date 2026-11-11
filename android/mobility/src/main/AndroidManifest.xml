@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="com.argsecure.permission.RASTAG_MOBILITY" android:protectionLevel="signature" />
+    <uses-permission android:name="com.argsecure.permission.RASTAG_MOBILITY" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <queries><package android:name="com.argsecure.scada" /></queries>
+    <application android:label="حرکت و لیدار رستاگ" android:icon="@drawable/ic_mobility"
+        android:allowBackup="false" android:usesCleartextTraffic="false" android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+        <activity android:name=".MobilityActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity android:name=".MappingActivity" android:exported="true" android:launchMode="singleTask"
+            android:permission="com.argsecure.permission.RASTAG_MOBILITY" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".LidarActivity" android:exported="true" android:launchMode="singleTop"
+            android:permission="com.argsecure.permission.RASTAG_MOBILITY" />
+        <activity android:name=".MotionActivity" android:exported="true" android:launchMode="singleTop"
+            android:permission="com.argsecure.permission.RASTAG_MOBILITY" android:windowSoftInputMode="adjustResize" />
+        <service android:name=".MobilityService" android:exported="false" android:stopWithTask="false"
+            android:foregroundServiceType="connectedDevice" />
+        <receiver android:name=".MobilityReceiver" android:exported="true"
+            android:permission="com.argsecure.permission.RASTAG_MOBILITY">
+            <intent-filter>
+                <action android:name="com.argsecure.rastagmobility.START" />
+                <action android:name="com.argsecure.rastagmobility.QUERY" />
+                <action android:name="com.argsecure.rastagmobility.COMMAND" />
+                <action android:name="com.argsecure.rastagmobility.MOTION_REQUEST" />
+            </intent-filter>
+        </receiver>
+        <receiver android:name=".MobilityBootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

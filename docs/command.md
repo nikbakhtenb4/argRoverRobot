@@ -1,82 +1,24 @@
+# Motion and OTA contract
 
-adb devices
+## ESP HTTPS
 
-adb shell am force-stop com.zqc.camera
+All endpoints require the paired client certificate; the client validates the server CA, hostname and pinned SPKI. One Android foreground service owns `/v1/session` and its 7-second heartbeat lease. Movement has the stricter 250 ms independent expiry.
 
+`GET /v3/motion` returns controller boot ID, uptime, sequence/run, mode, reason, requested/decision direction, relay/PWM/opto commanded state, scan/link freshness, profile, and four sector clearances. `stop_confirmed` is always false because no wheel feedback exists.
 
+`POST /v3/motion` uses strict flat JSON, rejects duplicate/unknown fields, wrong boot/session, stale/out-of-order commands and excessive deadlines. Base fields are `boot`, `session`, `seq`, `operation`; non-stop requests also require `expires_at_ms` in ESP monotonic time.
 
+- `drive`: `run`, `direction` (1 forward, 2 back, 3 left, 4 right), `intensity` (1–100).
+- `jog`: `run`, `left_cdeg`, `right_cdeg`; relay and optos stay OFF.
+- `stop`: base fields only. Safe and idempotent, even after lease expiry in the same session.
+- `configure`: `verified:true`, `f_left/f_right`, `b_left/b_right`, `l_left/l_right`, `r_left/r_right`, `front_cdeg`, `stop_mm`. Requires stopped state, four distinct non-home bounded pairs, and a deadline at most 2 seconds ahead. Saved atomically in NVS. Does not activate motion.
 
+Old `/v2/motion/arm` and `/v2/motion/drive` cannot bypass calibrated named directions. `/v2/lidar/frame` remains the RLS2 binary frame contract. `/v2/ota` supports authenticated app-only OTA with size/project/digest validation and boot rollback; never use raw flash backups as OTA input.
 
+## Android IPC
 
+Signature permission: `com.argsecure.permission.RASTAG_MOBILITY`. Send an explicit broadcast to `com.argsecure.rastagmobility.MobilityReceiver`, action `com.argsecure.rastagmobility.MOTION_REQUEST`, with `MobilityContract.PAYLOAD` and the trusted reply package. Use `MotionRequest.json(...)` from mobility-api for both internal AI planners (`source:ai`) and explicit user commands (`source:human`).
 
+Payload: `version:1`, 32-hex `request_id`, `issued_elapsed_ms` from Android elapsedRealtime, `ttl_ms` ≤3000, `source`, `operation:drive|stop`, `direction:forward|back|left|right|stop`, `intensity`, `duration_ms` ≤3000. STOP uses zero intensity and duration. Requests require a current temporary operator enable except STOP. No raw GPIO, credentials, network addresses, or servo angles are exposed through this public request interface.
 
------------------------
-دستور	کار
-لیست کامل دستورها
-
-(Serial Monitor با line ending روی Newline. دستور h هم همین لیست را چاپ می‌کند.)
-
-وضعیت
-
-دستور	کار
-s	وضعیت کل دستگاه: روند بوت، حرکت فعلی، رله، اپتوها، سروو‌ها، ژیروسکوپ‌ها
-o	فقط وضعیت اپتوها (فعال/غیرفعال و ولتاژ خوانده‌شده)
-r	فقط وضعیت رله (روشن/خاموش، چند ثانیه پیش، به چه دلیل)
-g	زاویه roll و pitch و سرعت زاویه‌ای ژیروسکوپ‌های چپ و راست
-v	اطلاعات سروو‌ها: آخرین زاویه داده‌شده، هدف، سرعت، پهنای پالس، حدها
-h	لیست دستورها
-
-حرکت
-
-دستور	کار
-fwd (مستقیم) / back (عقب) / left (چپ) / right (راست)	اپتوها طبق ماسک آن حرکت فعال می‌شوند و سروو‌ها به زاویه آن حرکت می‌روند
-stop یا x	فوراً همه اپتوها غیرفعال، ۰.۵ ثانیه بعد همه سروو‌ها به home
-kill	مثل stop، به‌علاوه خاموش شدن رله
-
-رله
-
-دستور	کار
-relay on / r on	روشن کردن رله (مستقل از اپتو و سروو، حتی قبل از پایان بوت)
-relay off / r off	خاموش کردن رله
-
-هر تغییر رله (خودکار یا دستی) با زمان و دلیل لاگ می‌شود: [LOG 12.345] RELAY -> ON (manual command).
-
-سروو
-
-دستور	کار
-s1 95 / s2 85 / s3 90	رفتن یک سروو به زاویه
-s 95 85 90	هر سه سروو با هم
-j1 0.2 / j2 -0.2 / j3 0.3	جابه‌جایی کوچک نسبت به هدف
-home	هر سه سروو به home
-smooth 0.8 / speed 20	نرمی و سقف سرعت حرکت
-
-اپتو (مثل قبل)
-
-دستور	کار
-1 2 on / 3 4 off	فعال/غیرفعال چند کانال (on فقط بعد از پایان بوت)
-1 2 2650	تنظیم ولتاژ فعال کانال ۱ و ۲
-all on / all off / disarm	همه فعال / همه غیرفعال
-
-ژیروسکوپ و بوت
-
-دستور	کار
-ok	تأیید ادامه، وقتی هنگام بوت تخت نبود (رله را روشن می‌کند)
-gzero	زاویه فعلی را «صاف» ثبت می‌کند (فقط وقتی سکو واقعاً تراز است)
-gcal	کالیبره دوباره بایاس گایرو (بدون حرکت)
-
-
-
-
-
-
-------------
-دستورهای جدید سروو
-دستور	کار
-h	هر دو سروو به Home
-h s1 / h s2 / h s1 s2	فقط سروو(های) نام‌برده به Home
-s1 s2 u	هر دو ۵ درجه بالا
-s1 s2 u 10	هر دو ۱۰ درجه بالا
-s1 s2 ud	سروو ۱ بالا و سروو ۲ پایین (۵ درجه)
-s1 s2 du 10	سروو ۱ پایین و سروو ۲ بالا (۱۰ درجه)
-s1 u / s2 d 3	فقط یک سروو، بالا یا پایین
-s1 95	زاویه مطلق (مثل قبل)
+`MOTION_RESULT` reports admission (`queued`, rejected reason, duplicate), **not physical execution**. `MOTION_STATUS` broadcasts the public aggregate decision: request, decision, reason, source, configured/driving, monotonic publication time, and `physical_motion_verified:false`. Discard stale/future observations. Accepted requests are never automatically replayed. Stop/failure clears the active demand instead of leaving a backlog.

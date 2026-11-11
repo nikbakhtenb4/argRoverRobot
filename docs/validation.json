@@ -1,0 +1,69 @@
+{
+  "date": "2026-11-11",
+  "firmware": {
+    "version": "3.0.2-arg-motion",
+    "project": "rastag_link",
+    "bytes": 996480,
+    "sha256": "5b45535b0dbe4c191dd1f9eacb66465711929fd99e2dfe7e067753e3f21a7dc9",
+    "elf_sha256": "cb816a8394a5a8d82e26c2286d9f1ce5c72bc073d8f18841ca78de1dfdec2cb3"
+  },
+  "ota": {
+    "passed": true,
+    "application_valid": true,
+    "lidar_advanced": true,
+    "motion_armed": false
+  },
+  "host_controller_assertions": 416,
+  "legacy_parser_protocol_assertions": 318,
+  "fuzz_bytes": 300000,
+  "ota_host_tests": 8,
+  "android_unit_tests": {
+    "mobility": {
+      "tests": 32,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "mobility-api": {
+      "tests": 31,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "rover": {
+      "tests": 689,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "android_ipc_device_tests": 6,
+  "esp_device_negative_checks": [
+    "uncalibrated_all_outputs_off",
+    "expired",
+    "wrong_boot",
+    "wrong_session",
+    "unknown_field",
+    "invalid_direction",
+    "uncalibrated_drive_blocked",
+    "replay_blocked",
+    "identical_presets_rejected",
+    "duplicate_field_rejected",
+    "stop_no_physical_claim"
+  ],
+  "standalone_android_build": "passed",
+  "runtime_idle": {
+    "ticks": 11879,
+    "lock_misses": 0,
+    "apply_max_us": 117,
+    "mode": "off",
+    "reason": "stopped"
+  },
+  "physical_motion_tested": false,
+  "calibration_required": true,
+  "limitations": [
+    "No verified travel direction, wheel odometry, braking distance or physical emergency stop",
+    "No autonomous navigation or SLAM",
+    "Camera images and device credentials are excluded"
+  ]
+}

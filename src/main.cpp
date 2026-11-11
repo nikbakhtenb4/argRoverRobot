@@ -1,10 +1,10 @@
 #include <Arduino.h>
-#include <Wire.h>
 #include <math.h>
 
 // ======================= اپتوها =======================
-// کانال 0 و 1: 2.6V با DAC | کانال 2 و 3: 2.8V با Hi-Z / زمین
-const uint8_t PINS[4]     = {25, 26, 27, 13};
+// کانال 1 و 2: 2.6V با DAC | کانال 3 و 4: 2.8V با Hi-Z / زمین
+// توجه: کانال 3 از GPIO27 به GPIO23 منتقل شد (GPIO27 برای لیدار آزاد است)
+const uint8_t PINS[4]     = {25, 26, 23, 13};
 const uint8_t ADC_PINS[4] = {34, 35, 32, 33};
 const bool    IS_DAC[4]   = {true, true, false, false};
 const uint32_t VDD_MV = 3300;
@@ -15,6 +15,7 @@ bool     enabled[4]  = {false, false, false, false};
 // ======================= رله =======================
 const uint8_t RELAY_PIN = 4;
 const bool    RELAY_ACTIVE_LOW = true;
+const bool    AUTO_RELAY_ON_BOOT = false;   // true = بعد از Home خودکار روشن شود
 bool     relayOn = false;
 uint32_t relayChangedAt = 0;
 String   relayReason = "boot (default OFF)";
@@ -29,8 +30,8 @@ const float    RANGE_DEG       = 180.0f;
 const uint16_t SERVO_MIN_US    = 500;
 const uint16_t SERVO_MAX_US    = 2500;
 const float    HOME_DEG[2]     = {100, 105};
-const float    LIMIT_MIN       = 60;
-const float    LIMIT_MAX       = 140;
+const float    LIMIT_MIN       = 80;
+const float    LIMIT_MAX       = 120;
 const float    DEFAULT_STEP    = 5.0f;   // مقدار پیش‌فرض دستورهای u / d (درجه)
 
 float curDeg[2] = {100, 105};
@@ -38,28 +39,6 @@ float velDps[2] = {0, 0};
 float tgtDeg[2] = {100, 105};
 float smoothTime = 0.5f;
 float maxSpeed   = 30.0f;
-
-// ======================= ژیروسکوپ (MPU6050) =======================
-const uint8_t SDA_PIN = 21, SCL_PIN = 22;
-const uint8_t GYRO_ADDR[2] = {0x68, 0x69};
-const char*   GYRO_NAME[2] = {"LEFT", "RIGHT"};
-const float   FLAT_TOL_DEG = 2.0f;
-const uint32_t FLAT_HOLD_MS = 1000;
-const uint32_t FLAT_TIMEOUT_MS = 5000;
-
-struct Gyro {
-  bool ok = false;
-  bool init = false;
-  uint8_t fail = 0;
-  float roll = 0, pitch = 0;
-  float rawRoll = 0, rawPitch = 0;
-  float rollOff = 0, pitchOff = 0;
-  float gx = 0, gy = 0, gz = 0;
-  float ax = 0, ay = 0, az = 0;
-  float tempC = 0;
-  float biasX = 0, biasY = 0, biasZ = 0;
-};
-Gyro gyro[2];
 
 // ======================= حرکت‌ها =======================
 // ماسک اپتو (بیت0=CH1 ... بیت3=CH4) و زاویه دو سروو. فعلاً همه روی home.
@@ -77,9 +56,9 @@ bool stopPending = false;
 uint32_t stopAt = 0;
 
 // ======================= روند بوت =======================
-enum BootState { B_HOMING, B_CHECK, B_WAIT_OK, B_DONE };
+enum BootState { B_HOMING, B_WAIT_OK, B_DONE };
 BootState bootState = B_HOMING;
-uint32_t bootT = 0, flatSince = 0;
+uint32_t bootT = 0;
 bool userOk = false;
 const uint32_t HOME_SETTLE_MS = 1500;
 
@@ -160,7 +139,8 @@ void printOptos() {
     char mode[32];
     if (IS_DAC[i]) snprintf(mode, sizeof(mode), "DAC %umV", (unsigned)targetMv[i]);
     else snprintf(mode, sizeof(mode), "%s", enabled[i] ? "Hi-Z" : "LOW");
-    Serial.printf("CH%d %-3s | %-10s | meas=%4u mV\n", i + 1, enabled[i] ? "ON" : "OFF", mode, (unsigned)(sum / 8));
+    Serial.printf("CH%d %-3s | pin=%2d | %-10s | meas=%4u mV\n", i + 1, enabled[i] ? "ON" : "OFF",
+                  PINS[i], mode, (unsigned)(sum / 8));
   }
 }
 
@@ -232,136 +212,6 @@ void printServos() {
   }
 }
 
-// ======================= ژیروسکوپ =======================
-void i2cRecover() {
-  Wire.end();
-  pinMode(SCL_PIN, OUTPUT);
-  pinMode(SDA_PIN, INPUT_PULLUP);
-  for (int i = 0; i < 9; i++) {
-    digitalWrite(SCL_PIN, HIGH); delayMicroseconds(5);
-    digitalWrite(SCL_PIN, LOW);  delayMicroseconds(5);
-  }
-  pinMode(SCL_PIN, INPUT_PULLUP);
-  Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(50000);
-  Wire.setTimeOut(50);
-}
-
-bool mpuWriteReg(uint8_t addr, uint8_t reg, uint8_t val) {
-  Wire.beginTransmission(addr);
-  Wire.write(reg);
-  Wire.write(val);
-  return Wire.endTransmission() == 0;
-}
-
-bool mpuInit(int i) {
-  uint8_t a = GYRO_ADDR[i];
-  Wire.beginTransmission(a);
-  if (Wire.endTransmission() != 0) { gyro[i].ok = false; return false; }
-  mpuWriteReg(a, 0x6B, 0x00);
-  mpuWriteReg(a, 0x1A, 0x03);
-  mpuWriteReg(a, 0x1B, 0x00);
-  mpuWriteReg(a, 0x1C, 0x00);
-  gyro[i].ok = true;
-  gyro[i].init = false;
-  gyro[i].fail = 0;
-  return true;
-}
-
-bool mpuRead(int i, int16_t *v) {
-  uint8_t a = GYRO_ADDR[i];
-  Wire.beginTransmission(a);
-  Wire.write(0x3B);
-  if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom((int)a, 14) != 14) return false;
-  for (int k = 0; k < 7; k++) {
-    int hi = Wire.read();
-    int lo = Wire.read();
-    v[k] = (int16_t)((hi << 8) | lo);
-  }
-  return true;
-}
-
-void calibrateGyroBias() {
-  for (int i = 0; i < 2; i++) {
-    if (!gyro[i].ok) continue;
-    float sx = 0, sy = 0, sz = 0;
-    int n = 0;
-    for (int k = 0; k < 200; k++) {
-      int16_t v[7];
-      if (mpuRead(i, v)) { sx += v[4] / 131.0f; sy += v[5] / 131.0f; sz += v[6] / 131.0f; n++; }
-      delay(5);
-    }
-    if (n > 0) { gyro[i].biasX = sx / n; gyro[i].biasY = sy / n; gyro[i].biasZ = sz / n; }
-  }
-}
-
-void updateGyro() {
-  static uint32_t lastMs = millis();
-  static uint32_t lastRetry = 0;
-  uint32_t now = millis();
-  if (now - lastMs < 10) return;
-  float dt = (now - lastMs) / 1000.0f;
-  lastMs = now;
-  if (dt > 0.1f) dt = 0.1f;
-
-  if (now - lastRetry > 2000) {
-    lastRetry = now;
-    for (int i = 0; i < 2; i++) if (!gyro[i].ok) mpuInit(i);
-  }
-
-  for (int i = 0; i < 2; i++) {
-    Gyro &g = gyro[i];
-    if (!g.ok) continue;
-    int16_t v[7];
-    if (!mpuRead(i, v)) {
-      if (++g.fail > 20) {
-        g.ok = false;
-        g.fail = 0;
-        logTs(); Serial.printf("GYRO %s lost, recovering I2C bus\n", GYRO_NAME[i]);
-        i2cRecover();
-      }
-      continue;
-    }
-    g.fail = 0;
-    g.ax = v[0] / 16384.0f; g.ay = v[1] / 16384.0f; g.az = v[2] / 16384.0f;
-    g.tempC = v[3] / 340.0f + 36.53f;
-    g.gx = v[4] / 131.0f - g.biasX;
-    g.gy = v[5] / 131.0f - g.biasY;
-    g.gz = v[6] / 131.0f - g.biasZ;
-
-    float accRoll  = atan2f(g.ay, g.az) * 57.29578f;
-    float accPitch = atan2f(-g.ax, sqrtf(g.ay * g.ay + g.az * g.az)) * 57.29578f;
-    if (!g.init) {
-      g.rawRoll = accRoll; g.rawPitch = accPitch; g.init = true;
-    } else {
-      g.rawRoll  = 0.98f * (g.rawRoll  + g.gx * dt) + 0.02f * accRoll;
-      g.rawPitch = 0.98f * (g.rawPitch + g.gy * dt) + 0.02f * accPitch;
-    }
-    g.roll  = g.rawRoll  - g.rollOff;
-    g.pitch = g.rawPitch - g.pitchOff;
-  }
-}
-
-bool gyroFlat(int i) {
-  return gyro[i].ok && fabsf(gyro[i].roll) <= FLAT_TOL_DEG && fabsf(gyro[i].pitch) <= FLAT_TOL_DEG;
-}
-bool allFlat() { return gyroFlat(0) && gyroFlat(1); }
-
-void printGyro() {
-  Serial.println("--- GYRO ---");
-  for (int i = 0; i < 2; i++) {
-    Gyro &g = gyro[i];
-    if (!g.ok) {
-      Serial.printf("%-5s (0x%02X): NOT FOUND\n", GYRO_NAME[i], GYRO_ADDR[i]);
-      continue;
-    }
-    Serial.printf("%-5s (0x%02X): roll=%+6.2f pitch=%+6.2f | rate x=%+.1f y=%+.1f z=%+.1f deg/s | T=%.1fC | %s\n",
-                  GYRO_NAME[i], GYRO_ADDR[i], g.roll, g.pitch, g.gx, g.gy, g.gz, g.tempC,
-                  gyroFlat(i) ? "FLAT" : "NOT FLAT");
-  }
-}
-
 // ======================= حرکت و توقف =======================
 void doMotion(int m) {
   if (bootState != B_DONE) { Serial.println("REFUSED: boot sequence not finished"); return; }
@@ -395,7 +245,6 @@ void stopStep() {
 const char* bootName() {
   switch (bootState) {
     case B_HOMING:  return "HOMING";
-    case B_CHECK:   return "CHECKING GYROS";
     case B_WAIT_OK: return "WAITING FOR 'ok'";
     default:        return "DONE";
   }
@@ -406,41 +255,25 @@ void bootStep() {
   switch (bootState) {
     case B_HOMING:
       if (now - bootT >= HOME_SETTLE_MS && atHome()) {
-        Serial.println("[BOOT] servos at HOME. calibrating gyros (keep still)...");
-        calibrateGyroBias();
-        bootState = B_CHECK;
-        bootT = millis();
-        flatSince = 0;
+        Serial.println("[BOOT] servos at HOME");
+        if (AUTO_RELAY_ON_BOOT) {
+          relaySet(true, "boot: auto");
+          bootState = B_DONE;
+        } else {
+          Serial.println("[BOOT] send 'ok' to turn the relay ON and finish boot.");
+          bootState = B_WAIT_OK;
+          bootT = now;
+        }
       }
       break;
-
-    case B_CHECK: {
-      bool flat = allFlat();
-      if (flat) { if (flatSince == 0) flatSince = now; }
-      else flatSince = 0;
-
-      if (flat && now - flatSince >= FLAT_HOLD_MS) {
-        Serial.println("[BOOT] gyros FLAT -> starting automatically");
-        printGyro();
-        relaySet(true, "boot: gyros flat");
-        bootState = B_DONE;
-      } else if (now - bootT >= FLAT_TIMEOUT_MS) {
-        Serial.println("[BOOT] NOT FLAT (or gyro missing):");
-        printGyro();
-        Serial.println("[BOOT] send 'ok' to turn the relay ON anyway, or 'gzero' if the platform is level.");
-        bootState = B_WAIT_OK;
-        bootT = now;
-      }
-      break;
-    }
 
     case B_WAIT_OK:
       if (userOk) {
         relaySet(true, "boot: user confirmed");
         bootState = B_DONE;
-      } else if (now - bootT >= 5000) {
+      } else if (now - bootT >= 10000) {
         bootT = now;
-        Serial.println("[BOOT] still waiting for 'ok' (gyros not flat). 'g' shows angles.");
+        Serial.println("[BOOT] still waiting for 'ok'.");
       }
       break;
 
@@ -491,21 +324,19 @@ void printStatus() {
   printRelay();
   printOptos();
   printServos();
-  printGyro();
   Serial.println("===================================");
 }
 
 void printHelp() {
   Serial.println("--- COMMANDS ---");
-  Serial.println("Status : s (all) | o (optos) | r (relay) | g (gyro) | v (servos) | help or ?");
+  Serial.println("Status : s (all) | o (optos) | r (relay) | v (servos) | help or ?");
   Serial.println("Motion : fwd | back | left | right | stop (x) | kill (stop + relay off)");
   Serial.println("Relay  : relay on | relay off | r on | r off");
   Serial.println("Home   : h (both) | h s1 | h s2");
   Serial.println("Servo  : s1 95 | s2 85 | s 95 85 | j1 0.2 | j2 -0.2 | smooth 0.8 | speed 20");
   Serial.println("Step   : s1 s2 u [n] | s1 s2 ud [n] | s1 s2 du [n] | s1 d 3   (u=up(+), d=down(-), default 5)");
   Serial.println("Opto   : 1 2 on | 3 4 off | 1 2 2650 | all on | all off | disarm");
-  Serial.println("Gyro   : gzero (set current as level) | gcal (recalibrate bias)");
-  Serial.println("Boot   : ok (confirm start when gyros not flat)");
+  Serial.println("Boot   : ok (confirm start: turns relay ON after servos are at home)");
 }
 
 // "h" یا "h s1" یا "h s1 s2"
@@ -522,7 +353,6 @@ bool handleHome(String *t, int n) {
 }
 
 // "s1 95" ، "s1 s2 u" ، "s1 s2 ud 10" ، ...
-// خروجی true یعنی دستور از نوع سروو بود و پردازش شد
 bool handleServoCommand(String *t, int n) {
   int ord[2], cnt = 0;
   bool seen[2] = {false, false};
@@ -631,7 +461,6 @@ void handleCommand(String cmd) {
     if (c == "s" || c == "status") { printStatus(); return; }
     if (c == "o" || c == "opto")  { printOptos(); return; }
     if (c == "r" || c == "relay") { printRelay(); return; }
-    if (c == "g" || c == "gyro")  { printGyro(); return; }
     if (c == "v" || c == "servo") { printServos(); return; }
     if (c == "help" || c == "?")  { printHelp(); return; }
 
@@ -648,22 +477,6 @@ void handleCommand(String cmd) {
     if (c == "ok") {
       if (bootState == B_WAIT_OK) { userOk = true; Serial.println("OK received"); }
       else Serial.println("Nothing to confirm right now");
-      return;
-    }
-    if (c == "gzero") {
-      for (int i = 0; i < 2; i++) {
-        if (!gyro[i].ok) continue;
-        gyro[i].rollOff = gyro[i].rawRoll;
-        gyro[i].pitchOff = gyro[i].rawPitch;
-      }
-      Serial.println("Gyro level reference set (platform must be level now)");
-      printGyro();
-      return;
-    }
-    if (c == "gcal") {
-      Serial.println("Calibrating gyro bias (keep still)...");
-      calibrateGyroBias();
-      Serial.println("Done");
       return;
     }
   }
@@ -740,15 +553,6 @@ void setup() {
   }
   Serial.println("[BOOT] servos -> HOME");
 
-  // ژیروسکوپ‌ها
-  Wire.begin(SDA_PIN, SCL_PIN);
-  Wire.setClock(50000);
-  Wire.setTimeOut(50);
-  for (int i = 0; i < 2; i++) {
-    bool ok = mpuInit(i);
-    Serial.printf("[BOOT] gyro %s (0x%02X): %s\n", GYRO_NAME[i], GYRO_ADDR[i], ok ? "found" : "NOT FOUND");
-  }
-
   bootState = B_HOMING;
   bootT = millis();
   Serial.println("Send 'help' for the command list.");
@@ -757,7 +561,6 @@ void setup() {
 void loop() {
   if (Serial.available()) handleCommand(Serial.readStringUntil('\n'));
   updateServos();
-  updateGyro();
   bootStep();
   stopStep();
 }

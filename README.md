@@ -21,6 +21,7 @@ python -m platformio run --project-dir firmware/rastag_link
 python tools/test_arg_rover.py
 python tools/test_rastag_firmware.py
 python tools/test_rastag_ota.py
+python tools/test_rastag_hardware_link.py
 cd android
 ./gradlew :mobility:testDebugUnitTest :mobility-api:test :mobility:assembleDebug
 ```
@@ -37,6 +38,17 @@ python tools/rastag_ota.py upload firmware/rastag_link/.pio/build/esp32dev/firmw
 ```
 
 Only the application image is uploaded over pinned mTLS; no USB erase, repartition, re-pairing, or credential replacement. A failed acknowledgement must be resolved by reading status, never by automatically resending firmware. Boot readiness and image identity are checked, followed by LiDAR advancement and de-energized movement state.
+
+When replacing a controller, use `rastag_hardware_link.py provision --device
+rastag-esp-<12 lowercase MAC digits> --port <serial-port> --android <adb-serial>`
+after installing the compatible firmware. Provisioning waits for that exact USB
+identity, stores separate certificates for each board, and verifies pinned mTLS
+before staging the Android pairing import. Restart the mobility service to load
+the new import. Both legacy `motion_disabled` and current `motion_disarmed`
+readiness messages are supported. After verifying the replacement, select its
+existing local pair with `rastag_hardware_link.py activate --device <device-id>
+--android <adb-serial>`. Subsequent host status and OTA commands use that selection.
+The previous controller's keys remain intact in DPAPI storage outside the repo.
 
 Install the Android mobility APK signed with the same application certificate as the main Rastag app. Pairing stays in private app storage. The service is independent of the face/voice application.
 

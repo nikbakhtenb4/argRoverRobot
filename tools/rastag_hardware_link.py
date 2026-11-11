@@ -31,9 +31,44 @@ ROOT = Path(os.environ['LOCALAPPDATA']) / 'ARG/RastagHardwareLink'
 BUNDLE = ROOT / 'pair-083af2b76f3c.dpapi'
 DEVICE = 'rastag-esp-083af2b76f3c'
 HOST = DEVICE + '.local'
+ACTIVE = ROOT / 'active-device.json'
 ADB = r'E:\Android\SdkMain\platform-tools\adb.exe'
 ANDROID = '20260207134648'
 PACKAGE = 'com.argsecure.rastagmobility'
+
+
+def use_device(device, android=None):
+    """Select a per-device identity without replacing another controller's keys."""
+    global DEVICE, HOST, BUNDLE, ANDROID
+    if not isinstance(device, str) or not re.fullmatch(r'rastag-esp-[0-9a-f]{12}', device):
+        raise ValueError('Invalid controller identity')
+    if android is not None and (not isinstance(android, str)
+            or not re.fullmatch(r'[A-Za-z0-9_.:-]{1,128}', android)):
+        raise ValueError('Invalid Android transport')
+    DEVICE, HOST = device, device + '.local'
+    BUNDLE = ROOT / ('pair-' + device.removeprefix('rastag-esp-') + '.dpapi')
+    if android is not None:
+        ANDROID = android
+
+
+def validate_pair(data):
+    if data.get('device') != DEVICE or data.get('hostname') != HOST:
+        raise ValueError('Stored pairing belongs to a different controller')
+    return data
+
+
+def activate():
+    if not BUNDLE.is_file():
+        raise FileNotFoundError('Pair this controller before selecting it')
+    validate_pair(json.loads(protect(BUNDLE.read_bytes(), decrypt=True)))
+    pending = ACTIVE.with_suffix('.tmp')
+    pending.write_text(json.dumps({'device': DEVICE, 'android': ANDROID}), encoding='utf-8')
+    pending.replace(ACTIVE)
+
+
+if ACTIVE.is_file():
+    selected = json.loads(ACTIVE.read_text(encoding='utf-8'))
+    use_device(selected['device'], selected.get('android'))
 
 
 def pem_key(k):
@@ -65,10 +100,10 @@ def certificate(key, name, issuer=None, issuer_key=None, client=False, ca=False)
 
 def pair():
     if BUNDLE.exists():
-        return json.loads(protect(BUNDLE.read_bytes(), decrypt=True))
+        return validate_pair(json.loads(protect(BUNDLE.read_bytes(), decrypt=True)))
     ROOT.mkdir(parents=True,exist_ok=True)
     ca_key, server_key, client_key = [ec.generate_private_key(ec.SECP256R1()) for _ in range(3)]
-    ca = certificate(ca_key,'Rastag USB pair 083af2b76f3c',ca=True)
+    ca = certificate(ca_key,'Rastag USB pair '+DEVICE.removeprefix('rastag-esp-'),ca=True)
     server = certificate(server_key,HOST,ca,ca_key)
     client = certificate(client_key,'Rastag controller client',ca,ca_key,client=True)
     spki = server.public_key().public_bytes(serialization.Encoding.DER,serialization.PublicFormat.SubjectPublicKeyInfo)
@@ -96,6 +131,11 @@ def android_import(data, include_hint=False):
     print('Android private pairing import staged.')
 
 
+def ready_line(line):
+    return line in ('LINK_READY '+DEVICE+' motion_disabled',
+                    'LINK_READY '+DEVICE+' motion_disarmed')
+
+
 def provision(port):
     data = pair()
     wifi = wifi_credentials()
@@ -121,9 +161,13 @@ def provision(port):
                 data['ip_hint'] = str(ipaddress.ip_address(line.split()[1]))
                 BUNDLE.write_bytes(protect(json.dumps(data).encode('utf-8')))
                 print('Controller Wi-Fi address:',data['ip_hint'])
-            if line == 'LINK_READY '+DEVICE+' motion_disabled':
-                android_import(data)
-                print('Controller mTLS server ready; motion disabled.')
+            if ready_line(line):
+                with client_context(data) as context:
+                    code, state = request(data, context, '/v1/status')
+                if code != 200 or state.get('device') != DEVICE or state.get('motion_enabled') is not False:
+                    raise RuntimeError('Controller readiness was not verified over mTLS')
+                android_import(data, include_hint=True)
+                print('Controller mTLS server verified; motion disarmed.')
                 return
             if line == 'LINK_REJECTED': raise RuntimeError('USB provisioning rejected')
     raise TimeoutError('Controller not ready; no credentials printed. Inspect bounded serial status.')
@@ -224,7 +268,7 @@ def status(output=None):
     """Read-only handoff check. Never creates credentials or renews the controller lease."""
     if not BUNDLE.is_file():
         raise FileNotFoundError('No existing hardware pair')
-    data = json.loads(protect(BUNDLE.read_bytes(),decrypt=True))
+    data = validate_pair(json.loads(protect(BUNDLE.read_bytes(),decrypt=True)))
     if 'ip_hint' not in data:
         raise RuntimeError('No USB-confirmed controller address')
     app = json.loads(adb(['exec-out','run-as',PACKAGE,'cat','no_backup/hardware_link_status.json']))
@@ -250,14 +294,18 @@ def status(output=None):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action',choices=['pair','provision','import','probe','status'])
+    parser.add_argument('action',choices=['pair','provision','import','probe','status','activate'])
+    parser.add_argument('--device', default=DEVICE)
+    parser.add_argument('--android', default=ANDROID)
     parser.add_argument('--port',default='COM5')
     parser.add_argument('--output')
     args = parser.parse_args()
+    use_device(args.device, args.android)
     if args.action=='pair': pair(); print('Private per-device pairing material ready.')
     elif args.action=='provision': provision(args.port)
     elif args.action=='import': android_import(pair())
     elif args.action=='status': status(args.output)
+    elif args.action=='activate': activate(); print('Existing controller selected for host tools.')
     else: probe(args.output or 'artifacts/rastag-hardware-probe.json')
 
 
